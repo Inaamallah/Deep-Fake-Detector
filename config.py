@@ -23,7 +23,7 @@ class Settings(BaseSettings):
         description="Pixel diff threshold for scene change (0-255). Lower = more sensitive."
     )
     target_fps: float = Field(
-        default=2.0,
+        default=4.0,
         description="Target frames per second for uniform sampling fallback"
     )
     frame_size: tuple[int, int] = Field(
