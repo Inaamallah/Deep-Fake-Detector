@@ -7,11 +7,16 @@ venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest_tmp/
 
 # Generated pipeline artifacts
 data/raw_frames/
 data/face_crops/
 data/videos/
+results/
+models/*.pt
+models/*.onnx
+models/hyperparameter_trials/
 
 # Large local media inputs
 *.mp4

@@ -6,13 +6,13 @@ yt-dlp>=2025.1.15
 # =========================
 # Video Processing
 # =========================
-opencv-python-headless>=4.10.0
+opencv-python-headless>=4.10.0,<4.13.0
 Pillow>=11.2.1
 
 # =========================
 # Numerical Computing
 # =========================
-numpy>=2.2.5
+numpy>=1.26.4,<2.0
 
 # =========================
 # Async / CLI Utilities
@@ -51,3 +51,4 @@ mediapipe>=0.10.21
 onnxruntime>=1.22.0
 facenet-pytorch>=2.5.3 
 scipy>=1.13.0
+scikit-learn==1.4.2
