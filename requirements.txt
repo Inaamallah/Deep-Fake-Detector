@@ -49,3 +49,5 @@ httpx>=0.28.1
 # =========================
 mediapipe>=0.10.21
 onnxruntime>=1.22.0
+facenet-pytorch>=2.5.3 
+scipy>=1.13.0

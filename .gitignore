@@ -1,0 +1,21 @@
+# Virtual environments and local tooling
+env/
+.venv/
+venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated pipeline artifacts
+data/raw_frames/
+data/face_crops/
+data/videos/
+
+# Large local media inputs
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
