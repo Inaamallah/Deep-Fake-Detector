@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Generator, List
+from typing import Dict, Generator, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -22,7 +22,7 @@ class FrameExtractionError(Exception):
 class FrameBatch:
     """
     Output of frame extraction for one video.
-    frames_dir contains numbered PNG files: 000000.png, 000001.png, ...
+    frames_dir contains numbered JPEG files: 000000.jpg, 000001.jpg, ...
     """
     video_id: str
     frames_dir: Path
@@ -43,6 +43,10 @@ class FrameBatch:
             f"strategy={self.extraction_strategy} "
             f"elapsed={self.elapsed_seconds:.1f}s)"
         )
+
+
+# ── JPEG encode params (quality 95 is visually lossless, 10x faster than PNG) ──
+_JPEG_PARAMS = [cv2.IMWRITE_JPEG_QUALITY, 95]
 
 
 def _frame_diff(frame_a: np.ndarray, frame_b: np.ndarray) -> float:
@@ -79,21 +83,54 @@ def _resize_frame(frame: np.ndarray, target_size: tuple) -> np.ndarray:
     return canvas
 
 
+def _read_video_sequential(
+    cap: cv2.VideoCapture,
+    wanted: set[int],
+    total_frames: int,
+    desc: str = "Reading video",
+) -> Dict[int, np.ndarray]:
+    """
+    Read a video file sequentially and return only the wanted frame indices.
+
+    Sequential reading is MUCH faster than random seeking because H.264/H.265
+    use inter-frame compression. A random seek forces decoding from the nearest
+    keyframe every time, whereas sequential reads decode each frame in ~1ms.
+    """
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    grabbed: Dict[int, np.ndarray] = {}
+    max_wanted = max(wanted) if wanted else 0
+
+    for idx in tqdm(range(min(total_frames, max_wanted + 1)),
+                    desc=desc, unit="frame", leave=False):
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            continue
+        if idx in wanted:
+            grabbed[idx] = frame
+            if len(grabbed) == len(wanted):
+                break  # got everything, stop early
+
+    return grabbed
+
+
 def _scene_change_indices(
     cap: cv2.VideoCapture,
     total_frames: int,
     threshold: float,
     max_frames: int,
     log,
-) -> List[int]:
+) -> Tuple[List[int], Dict[int, np.ndarray]]:
     """
-    First pass: read every frame, record indices where scene change > threshold.
-    If too many scene-change frames are found, subsample them evenly.
-    If too few, fill in uniform samples.
+    Single-pass scene detection: reads frames sequentially, detects scene
+    changes, and caches the selected frames so they don't need to be read
+    again during extraction.
+
+    Returns (selected_indices, cached_frames_dict).
     """
     selected_indices: List[int] = [0]  # always include first frame
     prev_frame = None
     diff_scores: List[float] = []
+    cached_frames: Dict[int, np.ndarray] = {}
 
     # Read every Nth frame for efficiency on long videos
     # We never want to read more than ~1000 frames in the first pass
@@ -101,8 +138,11 @@ def _scene_change_indices(
 
     log.info("scene_detection_pass", stride=stride, total_frames=total_frames)
 
-    for idx in range(0, total_frames, stride):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    for idx in tqdm(range(0, total_frames, stride),
+                    desc="Scene detection", unit="frame", leave=False):
+        if stride > 1:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
         ret, frame = cap.read()
         if not ret or frame is None:
             continue
@@ -114,6 +154,10 @@ def _scene_change_indices(
                 selected_indices.append(idx)
 
         prev_frame = frame
+
+        # Cache the frame — we'll reuse it in the extraction step
+        if idx in selected_indices:
+            cached_frames[idx] = frame
 
     # Always include the last frame
     selected_indices.append(total_frames - 1)
@@ -140,7 +184,13 @@ def _scene_change_indices(
         ]
         selected_indices = sorted(set(selected_indices + uniform))
 
-    return selected_indices[:max_frames]
+    selected_indices = selected_indices[:max_frames]
+
+    # Keep only cached frames that are still selected
+    selected_set = set(selected_indices)
+    cached_frames = {k: v for k, v in cached_frames.items() if k in selected_set}
+
+    return selected_indices, cached_frames
 
 
 def _uniform_indices(
@@ -151,7 +201,7 @@ def _uniform_indices(
 ) -> List[int]:
     """
     Evenly sample frames at target_fps.
-    E.g. a 300-frame / 30fps video with target_fps=2.0 → every 15th frame.
+    E.g. a 300-frame / 30fps video with target_fps=2.0 -> every 15th frame.
     """
     step = max(1, int(fps / target_fps))
     indices = list(range(0, total_frames, step))
@@ -181,7 +231,7 @@ def extract_frames(
                                     uniform for long ones (>60s talking head).
 
     Returns:
-        FrameBatch with paths to all saved PNG files.
+        FrameBatch with paths to all saved JPEG files.
     """
     log = logger.bind(video_id=video_id, strategy=strategy)
     start = time.time()
@@ -208,6 +258,8 @@ def extract_frames(
     )
 
     # ── Choose strategy ──────────────────────────────────────────────────────
+    cached_frames: Dict[int, np.ndarray] = {}
+
     if strategy == "hybrid":
         # Talking-head / interview videos are often static and benefit from
         # uniform sampling; action videos benefit from scene-change detection.
@@ -216,7 +268,7 @@ def extract_frames(
         actual_strategy = strategy
 
     if actual_strategy == "scene_change":
-        indices = _scene_change_indices(
+        indices, cached_frames = _scene_change_indices(
             cap, total_frames, settings.scene_threshold,
             settings.max_frames, log
         )
@@ -227,16 +279,26 @@ def extract_frames(
 
     log.info("frame_indices_selected", count=len(indices), strategy=actual_strategy)
 
-    # ── Extract and save frames ──────────────────────────────────────────────
+    # ── Fetch any frames not already cached ──────────────────────────────────
+    missing = set(indices) - set(cached_frames.keys())
+    if missing:
+        newly_read = _read_video_sequential(
+            cap, missing, total_frames,
+            desc="Extracting frames",
+        )
+        cached_frames.update(newly_read)
+
+    cap.release()
+
+    # ── Resize and save as JPEG ──────────────────────────────────────────────
     frame_paths: List[Path] = []
     failed = 0
 
     for save_idx, frame_idx in enumerate(
-        tqdm(indices, desc="Extracting frames", unit="frame", leave=False)
+        tqdm(indices, desc="Saving frames", unit="frame", leave=False)
     ):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ret, frame = cap.read()
-        if not ret or frame is None:
+        frame = cached_frames.get(frame_idx)
+        if frame is None:
             log.warning("frame_read_failed", frame_idx=frame_idx)
             failed += 1
             continue
@@ -244,16 +306,14 @@ def extract_frames(
         # Resize to standard size
         frame = _resize_frame(frame, settings.frame_size)
 
-        # Save as PNG (lossless — important for artifact detection later)
-        save_path = output_dir / f"{save_idx:06d}.png"
-        success = cv2.imwrite(str(save_path), frame)
+        # Save as JPEG (quality 95 — visually lossless, ~10x faster than PNG)
+        save_path = output_dir / f"{save_idx:06d}.jpg"
+        success = cv2.imwrite(str(save_path), frame, _JPEG_PARAMS)
         if success:
             frame_paths.append(save_path)
         else:
             log.error("frame_save_failed", path=str(save_path))
             failed += 1
-
-    cap.release()
 
     elapsed = time.time() - start
 

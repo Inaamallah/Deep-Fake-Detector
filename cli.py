@@ -335,7 +335,9 @@ def status(video_id: str):
         manifest = json.loads(manifest_path.read_text())
         console.print_json(json.dumps(manifest, indent=2))
     else:
-        frames = sorted(frames_dir.glob("*.png"))
+        frames = sorted(
+            list(frames_dir.glob("*.jpg")) + list(frames_dir.glob("*.png"))
+        )
         console.print(f"Found {len(frames)} frames in {frames_dir}")
 
 # Add to cli.py
@@ -391,8 +393,14 @@ def infer(video_id: str, batch_size: int, export_onnx: bool, threshold: float):
         raise
 
     # Print verdict with colour
-    colour = "red" if result.verdict == "DEEPFAKE" else "green"
+    colour_map = {"DEEPFAKE": "red", "REAL": "green", "INCONCLUSIVE": "yellow"}
+    colour = colour_map.get(result.verdict, "yellow")
     console.print(f"\n[bold {colour}]  VERDICT: {result.verdict}[/bold {colour}]")
+    if result.verdict == "INCONCLUSIVE":
+        console.print(
+            "  [yellow]WARNING: Confidence too low to call REAL or FAKE. "
+            "Consider adding more frames or calibrating the threshold.[/yellow]"
+        )
     console.print(f"  Weighted P(fake) : {result.weighted_prob_fake:.1%}")
     console.print(f"  Mean P(fake)     : {result.mean_prob_fake:.1%}")
     console.print(f"  Threshold        : {result.decision_threshold:.1%}")
@@ -481,6 +489,88 @@ def finetune(
     console.rule("[bold green]Fine-tuning complete ✓[/bold green]")
 
 
+@cli.command()
+@click.argument("video_id")
+@click.option("--top-heatmaps",  default=5,    type=int,
+              help="Number of Grad-CAM heatmaps to generate (default: 5)")
+@click.option("--smooth-window", default=5,    type=int,
+              help="Temporal smoothing window in frames (default: 5)")
+@click.option("--bootstrap",     default=2000, type=int,
+              help="Bootstrap iterations for confidence intervals (default: 2000)")
+def analyze(video_id: str, top_heatmaps: int, smooth_window: int, bootstrap: int):
+    """
+    Run Day 4 analysis on a scored video: temporal analysis, Grad-CAM
+    heatmaps, and bootstrap confidence intervals.
+
+    Reads:   data/face_crops/<VIDEO_ID>/inference_result.json
+    Writes:  data/results/<VIDEO_ID>/final_report.json
+             data/results/<VIDEO_ID>/heatmaps/*.png
+
+    Prerequisites: run `ingest`, `detect-faces`, and `infer` first.
+
+    \b
+    Example:
+      python cli.py analyze a3b9f2c1
+    """
+    from src.scoring.report_builder import build_report
+
+    inference_path = settings.face_crops_dir / video_id / "inference_result.json"
+
+    if not inference_path.exists():
+        console.print(f"[red]No inference result found for {video_id}[/red]")
+        console.print("Run [bold]python cli.py infer <video_id>[/bold] first.")
+        raise SystemExit(1)
+
+    console.rule("[bold]Day 4: Temporal Analysis & Explainability[/bold]")
+
+    try:
+        with console.status("[cyan]Building analysis report...[/cyan]"):
+            report = build_report(
+                inference_result_path = inference_path,
+                top_n_heatmaps       = top_heatmaps,
+                smooth_window        = smooth_window,
+                n_bootstrap          = bootstrap,
+            )
+    except Exception as exc:
+        console.print(f"[red]✗ Analysis failed:[/red] {exc}")
+        raise SystemExit(1)
+
+    colour_map = {"DEEPFAKE": "red", "REAL": "green", "INCONCLUSIVE": "yellow"}
+    colour = colour_map.get(report.verdict, "yellow")
+    t      = report.temporal
+    ci     = report.confidence_interval
+
+    console.print(f"\n[bold {colour}]  VERDICT : {report.verdict}[/bold {colour}]")
+    console.print(f"  Weighted P(fake) : {report.weighted_prob_fake:.1%}")
+    console.print(
+        f"  95% CI           : "
+        f"[{ci['ci_lower_95']:.3f}, {ci['ci_upper_95']:.3f}]"
+    )
+    console.print(f"  Bootstrap std    : {ci['bootstrap_std']:.4f}")
+    console.print(f"  Temporal verdict : {t['temporal_verdict']}")
+    console.print(
+        f"  Suspicious frames: {t['suspicious_frame_ratio']:.1%} of total"
+    )
+    console.print(
+        f"  Suspicious windows: {len(t['suspicious_windows'])} detected"
+    )
+    console.print(
+        f"  Run-length score : {t['run_length_score']:.2f} "
+        f"({'clustered' if t['run_length_score'] > 1.2 else 'scattered'})"
+    )
+    console.print(
+        f"  Peak frame       : #{t['peak_frame_idx']} "
+        f"(P(fake)={t['peak_score']:.3f})"
+    )
+    console.print(f"  Heatmaps saved   : {len(report.heatmaps)}")
+    console.print(f"  Elapsed          : {report.elapsed_seconds:.1f}s")
+
+    result_path = settings.results_dir / video_id / "final_report.json"
+    console.print(f"\n  Report saved to  : {result_path}")
+    console.print(f"\n  {ci['interpretation']}")
+
+    console.rule("[bold green]Day 4 complete ✓[/bold green]")
+    
 @cli.command()
 @click.option(
     "--real-manifests", "real_manifest_paths",

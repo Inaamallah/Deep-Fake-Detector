@@ -1,0 +1,12 @@
+{
+  "weights_path": "\\content\\hyper_results\\trial_017_lr0.0001_bs8_wd0.0001_freeze2.pt",
+  "best_val_auc": 0.9708333333333334,
+  "best_val_acc": 0.8709677419354839,
+  "best_epoch": 4,
+  "epochs_ran": 5,
+  "learning_rate": 0.0001,
+  "batch_size": 8,
+  "weight_decay": 0.0001,
+  "freeze_blocks": 2,
+  "patience": 2
+}

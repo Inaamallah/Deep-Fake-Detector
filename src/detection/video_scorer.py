@@ -68,14 +68,26 @@ def aggregate_scores(scores: List[FaceScore], threshold: float = 0.5) -> dict:
     weighted_prob  = float(np.average(probs, weights=weights))
     fake_ratio     = float(np.mean(probs >= threshold))
 
-    verdict = "DEEPFAKE" if weighted_prob >= threshold else "REAL"
-    if verdict == "DEEPFAKE":
+    # ── confidence calculation ──────────────────────────────────────────
+    if weighted_prob >= threshold:
         confidence_scale = max(1.0 - threshold, 1e-6)
         overall_confidence = (weighted_prob - threshold) / confidence_scale
     else:
         confidence_scale = max(threshold, 1e-6)
         overall_confidence = (threshold - weighted_prob) / confidence_scale
     overall_confidence = float(np.clip(overall_confidence, 0.0, 1.0))
+
+    # ── verdict with INCONCLUSIVE zone ───────────────────────────────────
+    # A confidence below 10% means the weighted score sits within ±5% of
+    # the decision boundary — the model is essentially coin-flipping and
+    # any hard label would be misleading.
+    MIN_CONFIDENCE = 0.10
+    if overall_confidence < MIN_CONFIDENCE:
+        verdict = "INCONCLUSIVE"
+    elif weighted_prob >= threshold:
+        verdict = "DEEPFAKE"
+    else:
+        verdict = "REAL"
 
     return {
         "mean_prob_fake":    round(mean_prob, 4),
