@@ -52,3 +52,15 @@ onnxruntime>=1.22.0
 facenet-pytorch>=2.5.3 
 scipy>=1.13.0
 scikit-learn==1.4.2
+
+# =========================
+# Fast API
+# =========================
+
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+celery==5.3.6
+redis==5.0.4
+slowapi==0.1.9
+python-multipart==0.0.9
+aiofiles==23.2.1
