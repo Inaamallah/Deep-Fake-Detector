@@ -42,6 +42,23 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "json"  # "json" or "console"
 
+    api_keys: list[str] = Field(
+    default=["dev-key-change-in-production"],
+    description=(
+        "List of valid API keys. In production, set via environment variable "
+        "DEEPFAKE_API_KEYS='[\"key1\",\"key2\"]'. "
+        "The default key is intentionally weak — change it before deploying."
+    ),
+    )
+    celery_broker_url: str = Field(
+        default="redis://localhost:6379/0",
+        description="Redis URL for the Celery task queue broker.",
+    )
+    celery_backend_url: str = Field(
+        default="redis://localhost:6379/1",
+        description="Redis URL for storing Celery task results.",
+    )
+
     model_config = SettingsConfigDict(env_file=".env", env_prefix="DEEPFAKE_")
 
 

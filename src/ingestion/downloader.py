@@ -4,7 +4,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass, field, asdict
@@ -210,8 +212,18 @@ def _download_with_ytdlp(url: str, dest_dir: Path) -> Path:
     log.info("downloading_via_ytdlp")
 
     output_template = str(dest_dir / "%(id)s.%(ext)s")
+
+    # Resolve yt-dlp executable: prefer the venv's Scripts/yt-dlp.exe,
+    # fall back to sys.executable -m yt_dlp (always works if yt-dlp is
+    # installed in the same Python environment the worker is running).
+    ytdlp_path = shutil.which("yt-dlp")
+    if ytdlp_path:
+        ytdlp_cmd = [ytdlp_path]
+    else:
+        ytdlp_cmd = [sys.executable, "-m", "yt_dlp"]
+
     cmd = [
-        "yt-dlp",
+        *ytdlp_cmd,
         "--format", "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best",
         "--merge-output-format", "mp4",
         "--output", output_template,
@@ -230,7 +242,8 @@ def _download_with_ytdlp(url: str, dest_dir: Path) -> Path:
         )
     except FileNotFoundError:
         raise VideoDownloadError(
-            "yt-dlp not found. Install: pip install yt-dlp"
+            "yt-dlp not found. Install with: pip install yt-dlp "
+            "(make sure you are using the same Python environment as the worker)"
         )
     except subprocess.TimeoutExpired:
         raise VideoDownloadError(f"yt-dlp timed out downloading {url}")
