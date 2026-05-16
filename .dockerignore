@@ -1,0 +1,36 @@
+# .dockerignore  ← CREATE at project root
+
+# Virtual environment — dependencies are reinstalled inside the container
+venv/
+.venv/
+
+# Frontend node_modules and build artifacts
+frontend/node_modules/
+frontend/.env.local
+
+# Data directories — these are mounted as Docker volumes, not baked in
+data/
+models/
+logs/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor and OS files
+.git/
+.gitignore
+.env
+*.md
+.DS_Store

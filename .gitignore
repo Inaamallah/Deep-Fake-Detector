@@ -1,26 +1,91 @@
-# Virtual environments and local tooling
+# ──────────────────────────────────────────────
+# Virtual environments
+# ──────────────────────────────────────────────
 env/
-.venv/
+.env/
 venv/
+.venv/
 
-# Python caches
+# ──────────────────────────────────────────────
+# Environment / secret files
+# ──────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ──────────────────────────────────────────────
+# Python caches & bytecode
+# ──────────────────────────────────────────────
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
 .pytest_cache/
 .pytest_tmp/
+*.egg-info/
+dist/
+build/
 
-# Generated pipeline artifacts
+# ──────────────────────────────────────────────
+# Node / Frontend
+# ──────────────────────────────────────────────
+node_modules/
+package-lock.json
+
+# ──────────────────────────────────────────────
+# IDE & editor configs
+# ──────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ──────────────────────────────────────────────
+# OS-generated files
+# ──────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ──────────────────────────────────────────────
+# Generated pipeline artifacts & data
+# ──────────────────────────────────────────────
 data/raw_frames/
 data/face_crops/
 data/Videos/
+data/downloads/
+data/uploads/
+data/results/
+data/jobs.db
 results/
+
+# ──────────────────────────────────────────────
+# Model weights & training artifacts
+# ──────────────────────────────────────────────
 models/*.pt
 models/*.onnx
+models/hyper_results/
 models/hyperparameter_trials/
 
+# ──────────────────────────────────────────────
 # Large local media inputs
+# ──────────────────────────────────────────────
 *.mp4
 *.mov
 *.avi
 *.mkv
 *.webm
+
+# ──────────────────────────────────────────────
+# Logs & databases
+# ──────────────────────────────────────────────
+logs/
+*.log
+*.sqlite3
+*.db
+
+# ──────────────────────────────────────────────
+# Docker (local overrides only)
+# ──────────────────────────────────────────────
+docker-compose.override.yml

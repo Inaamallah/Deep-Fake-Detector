@@ -1,0 +1,76 @@
+# Dockerfile.api  ← CREATE at project root
+
+# We pin to a specific Python patch version for reproducibility.
+# Using slim-bookworm (Debian 12 minimal) rather than alpine because
+# several of our dependencies (opencv, mediapipe) need glibc, which
+# Alpine does not have. Slim gives us small images without that problem.
+FROM python:3.11.9-slim-bookworm
+
+# Set working directory early so all subsequent COPY and RUN instructions
+# use it as their reference point.
+WORKDIR /app
+
+# Install system dependencies in a single RUN layer.
+# Combining all apt commands into one layer:
+#   1. Keeps the final image smaller (each layer adds overhead).
+#   2. Prevents apt cache from persisting between layers.
+# ffmpeg provides both ffmpeg and ffprobe, which our downloader uses.
+# libgl1 is required by OpenCV's headless build for certain codec operations.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libgl1 \
+        libglib2.0-0 \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+# The rm command removes apt's package lists so they don't bloat the layer.
+
+# Copy only the dependency manifest first — before any application code.
+# This is the layer-caching trick described above. This layer is only
+# invalidated when requirements.txt changes, not on every code change.
+COPY requirements.txt .
+
+# Install Python dependencies.
+# --no-cache-dir prevents pip from storing a download cache inside the
+# container image — we will never reuse it, so it is just wasted space.
+# --upgrade pip ensures we are not hamstrung by an ancient pip version.
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
+# Now copy application code. This layer is re-built on every code change,
+# but it is fast because there is nothing heavy to compute here.
+COPY src/     ./src/
+COPY config.py .
+COPY cli.py   .
+
+# Create the directories that the application expects to exist.
+# In production these will be overridden by the mounted volume,
+# but creating them here ensures the container starts cleanly
+# even if the volume mount is misconfigured.
+RUN mkdir -p data/raw_frames data/face_crops data/results data/downloads \
+             data/uploads models logs
+
+# Expose the port Uvicorn will listen on.
+# This is documentation — it does not actually publish the port.
+# Port publishing is done in docker-compose.yml.
+EXPOSE 8000
+
+# The health check runs inside the container and tells Docker whether
+# the process is healthy. Docker Compose uses this to decide whether
+# the API is ready before starting dependent services.
+# --fail causes curl to return a non-zero exit code on HTTP errors,
+# which is what the health check mechanism needs.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD curl --fail http://localhost:8000/api/v1/health || exit 1
+
+# The CMD is what runs when the container starts.
+# We use exec form (JSON array) rather than shell form (string) so that
+# Uvicorn receives SIGTERM directly and can do graceful shutdown,
+# rather than having the signal swallowed by a shell wrapper.
+CMD ["uvicorn", "src.api.app:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--workers", "2", \
+     "--log-level", "warning"]
+# --workers 2: two Uvicorn worker processes for concurrent request handling.
+# log-level warning: structured logging from our code handles INFO+ logs;
+# we suppress Uvicorn's own verbose access logs to avoid duplication.

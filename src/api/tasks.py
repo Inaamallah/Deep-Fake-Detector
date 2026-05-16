@@ -16,11 +16,19 @@ and the next stage reads from disk. The disk IS the message between stages.
 This is also more resilient: if the worker restarts mid-pipeline, the completed
 stages' outputs are still on disk and can be inspected manually.
 """
+from src.api.metrics import (
+    jobs_submitted_total,
+    jobs_completed_total,
+    jobs_in_progress,
+    inference_duration_seconds,
+    verdict_total,
+)
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
-
+import time
 from src.api.celery_app import celery_app
 from src.api.database import update_job
 from src.api.models import JobStatus
@@ -50,6 +58,10 @@ def run_pipeline(self, job_id: str, source: str) -> dict:
     The `bind=True` argument gives us access to `self` — the task instance —
     which we use to log the Celery task ID alongside our job_id for debugging.
     """
+    jobs_submitted_total.inc()
+    jobs_in_progress.inc()
+    pipeline_start = time.time()
+
     log = logger.bind(job_id=job_id, celery_task_id=self.request.id)
     log.info("pipeline_started", source=source)
 
@@ -74,6 +86,7 @@ def run_pipeline(self, job_id: str, source: str) -> dict:
         )
 
         # ── Stage 2: Frame extraction ──────────────────────────────────────
+
         update_job(job_id, JobStatus.EXTRACTING_FRAMES, video_id=meta.video_id)
         log.info("stage_frames_started")
 
@@ -144,6 +157,13 @@ def run_pipeline(self, job_id: str, source: str) -> dict:
 
         # ── Mark job as DONE ──────────────────────────────────────────────
         result_path = settings.results_dir / meta.video_id / "final_report.json"
+
+        pipeline_elapsed = time.time() - pipeline_start
+        inference_duration_seconds.observe(pipeline_elapsed)
+        verdict_total.labels(verdict=report.verdict).inc()
+        jobs_completed_total.labels(final_status="DONE").inc()
+        jobs_in_progress.dec()
+
         update_job(
             job_id,
             JobStatus.DONE,
@@ -168,4 +188,6 @@ def run_pipeline(self, job_id: str, source: str) -> dict:
         error_msg = str(exc)
         log.error("pipeline_failed", error=error_msg, exc_info=True)
         update_job(job_id, JobStatus.FAILED, error_message=error_msg[:2000])
+        jobs_completed_total.labels(final_status="FAILED").inc()
+        jobs_in_progress.dec()
         raise

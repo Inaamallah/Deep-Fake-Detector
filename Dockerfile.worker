@@ -1,0 +1,47 @@
+# Dockerfile.worker  ← CREATE at project root
+
+FROM python:3.11.9-slim-bookworm
+
+WORKDIR /app
+
+# Same system dependencies as the API — the worker also uses ffmpeg
+# (for frame extraction) and OpenCV (for face detection).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libgl1 \
+        libglib2.0-0 \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
+COPY src/         ./src/
+COPY config.py    .
+COPY celery_worker.py .
+
+RUN mkdir -p data/raw_frames data/face_crops data/results data/downloads \
+             data/uploads models logs
+
+# The worker has no HTTP server, so no EXPOSE instruction is needed.
+
+# The health check for the Celery worker uses Celery's own inspect command
+# to verify the worker is alive and responding to the broker.
+# If the worker process has silently deadlocked or disconnected from Redis,
+# this will fail and Docker will restart the container.
+HEALTHCHECK --interval=60s --timeout=30s --start-period=30s --retries=3 \
+    CMD celery -A celery_worker.celery_app inspect ping \
+        --destination celery@$$HOSTNAME --timeout 20 || exit 1
+# $$HOSTNAME is intentionally double-dollared — Docker Compose evaluates
+# single $ at compose-file parse time; $$ passes a literal $ to the shell
+# inside the container, where it expands to the container's hostname.
+
+CMD ["celery", "-A", "celery_worker.celery_app", "worker", \
+     "--loglevel=info", \
+     "--concurrency=2", \
+     "--max-tasks-per-child=50"]
+# --max-tasks-per-child=50: after 50 tasks, the worker process is replaced
+# with a fresh one. This prevents memory leaks from slowly accumulating
+# over time in a long-running ML process. PyTorch and ONNX Runtime can
+# gradually grow their memory footprint; recycling the process bounds this.

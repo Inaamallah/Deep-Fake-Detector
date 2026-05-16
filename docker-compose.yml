@@ -1,0 +1,138 @@
+# docker-compose.yml  ← CREATE at project root
+# Requires Docker Compose v2 (built into Docker Desktop; `docker compose` not `docker-compose`)
+
+name: deepfake-detector
+
+# ── Shared configuration (YAML anchors) ──────────────────────────────────────
+# YAML anchors (&name) and aliases (*name) let us define config once and
+# reuse it. Both the API and worker share the same environment variables,
+# volume mounts, and restart policy. Without anchors we would repeat the
+# same 20 lines in two places — a maintenance hazard.
+x-common-app-env: &common-app-env
+  DEEPFAKE_LOG_FORMAT: json
+  DEEPFAKE_LOG_LEVEL: INFO
+  DEEPFAKE_CELERY_BROKER_URL: redis://redis:6379/0
+  DEEPFAKE_CELERY_BACKEND_URL: redis://redis:6379/1
+  # In production, set DEEPFAKE_API_KEYS via a Docker secret or .env file.
+  # Never hard-code real API keys in docker-compose.yml which goes into git.
+  DEEPFAKE_API_KEYS: '["${API_KEY:-dev-key-change-in-production}"]'
+
+x-common-volumes: &common-volumes
+  - pipeline-data:/app/data      # shared between API and worker
+  - pipeline-models:/app/models  # ML model weights (downloaded once, reused)
+  - pipeline-logs:/app/logs
+
+x-restart-policy: &restart-policy
+  restart: unless-stopped
+  # unless-stopped: restart automatically on crash or reboot, BUT NOT if
+  # you manually `docker compose stop` it. This is the right default for
+  # production services that you might want to intentionally pause.
+
+# ── Services ──────────────────────────────────────────────────────────────────
+services:
+
+  redis:
+    image: redis:7.2-alpine
+    # Alpine is ~30MB vs ~120MB for the full image — ideal for Redis
+    # which is a simple, well-contained service.
+    <<: *restart-policy
+    ports:
+      - "6379:6379"   # expose for local debugging only; remove in production
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
+    # maxmemory + allkeys-lru: if Redis fills to 512MB, it evicts the least
+    # recently used keys. This prevents an unusually large job from exhausting
+    # server memory and crashing the whole system.
+    # appendonly + everysec: write-ahead log flushed every second.
+    # Means you lose at most 1 second of data on a crash — acceptable for a job queue.
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context:    .
+      dockerfile: Dockerfile.api
+    <<: *restart-policy
+    ports:
+      - "8000:8000"   # expose directly for development; Nginx proxies in production
+    environment:
+      <<: *common-app-env
+    volumes: *common-volumes
+    depends_on:
+      redis:
+        condition: service_healthy
+      # service_healthy means Docker Compose waits until Redis passes its
+      # health check before starting the API. Without this, the API might
+      # start, try to connect to Redis, fail, and crash — even though Redis
+      # would have been ready a few seconds later.
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+
+  worker:
+    build:
+      context:    .
+      dockerfile: Dockerfile.worker
+    <<: *restart-policy
+    environment:
+      <<: *common-app-env
+      # Give the worker more threads for ONNX Runtime inference.
+      # The API container handles I/O; the worker handles CPU-intensive ML.
+      OMP_NUM_THREADS: "4"
+    volumes: *common-volumes
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+        # Wait for the API to be healthy too — this ensures the SQLite
+        # database has been initialised (init_db() runs on API startup)
+        # before the worker tries to update job statuses.
+
+  nginx:
+    image: nginx:1.27-alpine
+    <<: *restart-policy
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      # The frontend static files are copied in at build time (see below).
+      # We bind-mount the dist/ directory so you can update the frontend
+      # without rebuilding the Nginx image — just run `npm run build` again.
+      - ./frontend/dist:/usr/share/nginx/html:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+# Named volumes are managed by Docker and persist between `docker compose down`
+# and `docker compose up` cycles. They are stored in Docker's internal storage
+# under /var/lib/docker/volumes/ on Linux.
+#
+# The critical design decision: pipeline-data is shared between the API and
+# worker services. Both mount it at /app/data. When the worker writes
+# data/results/abc/final_report.json, the API can immediately read it.
+# This shared filesystem IS the integration layer between the two processes.
+volumes:
+  redis-data:       # Redis append-only log and snapshots
+  pipeline-data:    # frames, face crops, results, uploaded files
+  pipeline-models:  # ONNX model weights (large, only download once)
+  pipeline-logs:    # structured JSON logs from both services

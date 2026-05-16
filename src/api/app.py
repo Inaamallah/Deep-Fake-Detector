@@ -7,6 +7,10 @@ creating `app` directly at module level. This makes testing cleaner because
 tests can call create_app() with different configurations without
 module-level side effects running at import time.
 """
+from fastapi.responses import Response
+from src.api.middleware import RequestLoggingMiddleware
+from src.api.metrics import metrics_response
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -71,7 +75,14 @@ def create_app() -> FastAPI:
         allow_methods     = ["*"],
         allow_headers     = ["*"],
     )
+    app.add_middleware(RequestLoggingMiddleware)
 
+    @app.get("/metrics", include_in_schema=False)
+    async def prometheus_metrics():
+        """Prometheus metrics endpoint — scraped by your monitoring system."""
+        content, content_type = metrics_response()
+        return Response(content=content, media_type=content_type)
+        
     app.include_router(router)
 
     @app.get("/", include_in_schema=False)
