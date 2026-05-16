@@ -1,0 +1,69 @@
+/* frontend/src/index.css */
+
+/* Tailwind's three layers — must appear in this order */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Base resets applied on top of Tailwind's preflight */
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background-color: #0d0e10;
+    color: #e2e8f0;
+    min-height: 100vh;
+  }
+
+  /* Thin scrollbar that matches the dark theme */
+  ::-webkit-scrollbar        { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track  { background: #14161a; }
+  ::-webkit-scrollbar-thumb  { background: #334155; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #475569; }
+}
+
+@layer components {
+  /* Reusable card surface */
+  .card {
+    @apply bg-surface-800 border border-slate-700 rounded-xl p-6;
+  }
+
+  /* Input field shared style */
+  .input-field {
+    @apply w-full bg-surface-700 border border-slate-600 rounded-lg
+           px-4 py-3 text-sm font-body text-slate-200
+           placeholder-slate-500 outline-none
+           focus:border-amber-500 focus:ring-1 focus:ring-amber-500
+           transition-colors duration-150;
+  }
+
+  /* Primary action button */
+  .btn-primary {
+    @apply bg-amber-500 hover:bg-amber-400 text-surface-900
+           font-sans font-semibold text-sm px-6 py-3 rounded-lg
+           transition-all duration-150
+           disabled:opacity-40 disabled:cursor-not-allowed
+           active:scale-95;
+  }
+
+  /* Secondary ghost button */
+  .btn-ghost {
+    @apply border border-slate-600 hover:border-slate-400 text-slate-400
+           hover:text-slate-200 font-sans text-sm px-4 py-2 rounded-lg
+           transition-all duration-150 active:scale-95;
+  }
+
+  /* Section label above panels */
+  .section-label {
+    @apply text-xs font-body font-medium text-slate-500 uppercase tracking-widest mb-4;
+  }
+}
