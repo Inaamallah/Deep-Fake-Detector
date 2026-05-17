@@ -260,8 +260,8 @@ The fastest path to a running system, assuming all prerequisites are installed.
 **Clone the repository and set up the Python environment:**
 
 ```bash
-git clone https://github.com/your-username/deepfake-detector.git
-cd deepfake-detector
+git clone https://github.com/Inaamallah/Deep-Fake-Detector
+cd Deep-Fake-Detector
 
 python3 -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
